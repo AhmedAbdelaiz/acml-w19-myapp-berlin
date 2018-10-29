@@ -4,9 +4,13 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
+	"strconv"
+	"time"
 
+	"github.com/go-redis/redis"
 	_ "github.com/lib/pq"
 )
 
@@ -17,10 +21,14 @@ var (
 	dbPassword = envOrDefault("MYAPP_DATABASE_PASSWORD", "secret")
 	dbName     = envOrDefault("MYAPP_DATABASE_NAME", "myapp")
 
+	cacheHost = envOrDefault("MYAPP_CACHE_HOST", "localhost")
+	cachePort = envOrDefault("MYAPP_CACHE_PORT", "6379")
+
 	webHost = envOrDefault("MYAPP_WEB_HOST", "")
 	webPort = envOrDefault("MYAPP_WEB_PORT", "8080")
 
-	db *sql.DB
+	db    *sql.DB
+	cache *redis.Client
 )
 
 func envOrDefault(key, defaultValue string) string {
@@ -52,6 +60,17 @@ func myHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func myCachedHandler(w http.ResponseWriter, r *http.Request) {
+	n, err := cache.Get("n").Result()
+
+	if err == redis.Nil {
+		n = strconv.Itoa(rand.Intn(100))
+		cache.Set("n", n, 5*time.Second)
+	}
+
+	fmt.Fprintf(w, "n = %s\n", n)
+}
+
 func main() {
 	dbInfo := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 		dbHost, dbPort, dbUser, dbPassword, dbName)
@@ -64,7 +83,15 @@ func main() {
 		log.Fatal(err)
 	}
 
+	cache = redis.NewClient(&redis.Options{
+		Addr: cacheHost + ":" + cachePort,
+	})
+	if _, err := cache.Ping().Result(); err != nil {
+		log.Fatal(err)
+	}
+
 	http.HandleFunc("/", myHandler)
+	http.HandleFunc("/cache", myCachedHandler)
 	log.Print("Listening on " + webHost + ":" + webPort + "...")
 	http.ListenAndServe(webHost+":"+webPort, nil)
 }
